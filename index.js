@@ -61,13 +61,11 @@ function concat(...arrays) {
   return out;
 }
 
-// Map a connect() failure onto the closest Wisp close reason.
 function connectErrorReason(error) {
   const message = String(error?.message ?? error).toLowerCase();
   if (message.includes("blocked")) return REASON.HOST_BLOCKED;
   if (message.includes("refused")) return REASON.CONN_REFUSED;
   if (message.includes("timed out") || message.includes("timeout")) return REASON.NO_RESPONSE;
-  // the runtime reports DNS failures, refused connections and Cloudflare-owned IPs with this same message
   if (message.includes("cannot connect") || message.includes("dns") || message.includes("resolve")) {
     return REASON.UNREACHABLE_HOST;
   }
@@ -97,8 +95,6 @@ class WispStream {
 
   push(data) {
     if (this.closed) return;
-    // packets in flight when a CONTINUE is sent can briefly overshoot BUFFER_SIZE, so only
-    // cut off clients that are clearly ignoring flow control
     if (this.queue.length >= BUFFER_SIZE * 4) {
       this.close(REASON.THROTTLED);
       return;
@@ -107,7 +103,6 @@ class WispStream {
     if (!this.pumping) this.pump();
   }
 
-  // Drain the per-stream FIFO into the TCP socket, granting more buffer to the client as we go.
   async pump() {
     this.pumping = true;
     try {
@@ -120,7 +115,6 @@ class WispStream {
         }
       }
     } catch {
-      // a connect failure has already closed the stream with a specific reason via the opened handler
       this.close(REASON.NETWORK_ERROR);
     } finally {
       this.pumping = false;
@@ -141,7 +135,6 @@ class WispStream {
     }
   }
 
-  // Pass a reason to notify the client; omit it when the client initiated the close.
   close(reason) {
     if (this.closed) return;
     this.closed = true;
@@ -190,7 +183,6 @@ class WispConnection {
     try {
       this.ws.send(encodePacket(type, streamId, payload));
     } catch {
-      // websocket already closed
     }
   }
 
@@ -217,7 +209,6 @@ class WispConnection {
         this.onConnect(streamId, payload);
         break;
       case PACKET.DATA:
-        // copy, since the underlying buffer may be reused once this handler returns
         this.streams.get(streamId)?.push(payload.slice());
         break;
       case PACKET.CLOSE:
@@ -283,11 +274,9 @@ export default {
     }
 
     const { 0: client, 1: server } = new WebSocketPair();
-    // newer compatibility dates deliver binary frames as Blobs by default
     server.binaryType = "arraybuffer";
     server.accept();
 
-    // Wisp v2 is used only when the client sends Sec-WebSocket-Protocol; browsers require it echoed back.
     const headers = new Headers();
     const protocols = request.headers.get("Sec-WebSocket-Protocol");
     if (protocols) headers.set("Sec-WebSocket-Protocol", protocols.split(",")[0].trim());
